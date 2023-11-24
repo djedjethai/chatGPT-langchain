@@ -4,26 +4,51 @@ from langchain.prompts import (
     HumanMessagePromptTemplate,
     MessagesPlaceholder
 )
+from langchain.schema import SystemMessage # allow to add static(with no variable) template
 from langchain.agents import OpenAIFunctionsAgent, AgentExecutor
+from langchain.memory import ConversationBufferMemory 
 from dotenv import load_dotenv
 
-from tools.sql import run_query_tool # the tool we just created
+from tools.sql import run_query_tool, list_tables, describe_tables_tool # the tool we just created
+from tools.report import write_report_tool
+from handlers.chat_model_start_handler import ChatModelStartHandler
 
 # pip install langchain openai python-dotenv
 # pip install tiktoken
 # pip install chromadb
+# pip install pyboxen  # to get nice color boxes from the callbacks
 
 load_dotenv()
 
-chat = ChatOpenAI()
+tables = list_tables() # return the list of the tables in the db
+
+handler = ChatModelStartHandler() # initialize the callback
+chat = ChatOpenAI(
+    callbacks=[handler] # could pass as many callback as needed [handler, handler1, etc]
+)
+
 prompt = ChatPromptTemplate(
     messages=[
+
+        SystemMessage(content=(
+            "You are an AI that have access to a SQLite database.\n"
+            f"The database has tables of: {tables}\n"
+            "Do not make assumptions about what tables exist "
+            "or what columns exist. Instead, use the 'describe_tables' function"
+        )),
+        MessagesPlaceholder(variable_name="chat_history"), # placeholder for our added memory 
         HumanMessagePromptTemplate.from_template("{input}"),
-        MessagesPlaceholder(variable_name="agent_scratchpad")
+        MessagesPlaceholder(variable_name="agent_scratchpad") # kind of memory between messages
     ]
 )
 
-tools = [run_query_tool]
+# memory save the responses messages if many agent_executor() calls
+memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+tools = [
+    run_query_tool, 
+    describe_tables_tool,
+    write_report_tool
+]
 
 agent = OpenAIFunctionsAgent(
     llm=chat,
@@ -33,11 +58,23 @@ agent = OpenAIFunctionsAgent(
 
 agent_executor = AgentExecutor(
     agent=agent,
-    verbose=True,
-    tools=tools
+    # verbose=True, # debugging mode
+    tools=tools,
+    memory=memory
 )
 
-agent_executor("How many users are in the database?")
+
+agent_executor(
+    "How many orders are there? Write the result to an html report."
+)
+
+agent_executor(
+    "Repeat the exact same process for users."
+)
+
+# agent_executor("How many users are in the database?")
+# agent_executor("Summarize the top 5 most popular products. Write the result to a report file.")
+# agent_executor("How many users have provided a shipping address?")
 
 
 
